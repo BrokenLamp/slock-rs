@@ -60,7 +60,14 @@
 //! };
 //! ```
 
+use futures::executor::block_on;
+pub use slock_derive::Slockable;
 use std::sync::{Arc, RwLock};
+
+mod slockable;
+pub use slockable::Slockable;
+
+pub mod vec;
 
 pub struct Slock<T> {
     lock: Arc<RwLock<T>>,
@@ -76,9 +83,11 @@ impl<T> Slock<T> {
 
     /// Extract inner values from within a Slock
     /// ```rust
-    /// use slock::*;
-    /// let lock = Slock::new((0, 1, 2));
-    /// let name = lock.map(|v| v.1);
+    /// # use slock::*;
+    /// # let lock = Slock::new((0, 1, 2));
+    /// # async {
+    /// let name = lock.map(|v| v.1).await;
+    /// # }
     /// ```
     pub async fn map<F, U>(&self, mapper: F) -> U
     where
@@ -90,6 +99,15 @@ impl<T> Slock<T> {
         }
     }
 
+    /// A setter for changing the internal data of the lock.
+    /// ```rust
+    /// # use slock::*;
+    /// # let lock = Slock::new(1i32);
+    /// # async {
+    /// lock.set(|v| v + 1).await;
+    /// lock.set(|_| 6).await;
+    /// # }
+    /// ```
     pub async fn set<F>(&self, setter: F)
     where
         F: FnOnce(T) -> T,
@@ -107,6 +125,14 @@ impl<T> Slock<T> {
     }
 
     /// A setter using a mutable reference
+    /// ```rust
+    /// # use slock::*;
+    /// # let lock = Slock::new(1i32);
+    /// # async {
+    /// lock.set_ref(|v| v + 1).await;
+    /// lock.set(|_| 6).await;
+    /// # }
+    /// ```
     pub async fn set_ref<F>(&self, setter: F)
     where
         F: FnOnce(&T) -> T,
@@ -119,27 +145,45 @@ impl<T> Slock<T> {
         }
     }
 
+    /// Create's a new lock pointing to the same data.
+    /// Modifying the data in the new lock will result in
+    /// seeing the same change in the old lock.
+    /// ```
+    /// # use slock::*;
+    /// let lock = Slock::new(0i32);
+    /// let the_same_lock = lock.split();
+    /// ```
     pub fn split(&self) -> Self {
         Self {
             lock: self.lock.clone(),
         }
     }
 
+    /// Returns the lock's atomic reference counter.
+    /// This is unsafe as using it can no longer guarantee
+    /// deadlocks won't occur.
     pub unsafe fn get_arc(&self) -> Arc<RwLock<T>> {
         self.lock.clone()
     }
 }
 
 impl<T: Clone> Slock<T> {
+    /// Returns a clone of the lock's data.
     pub async fn get_clone(&self) -> T {
         match self.lock.read() {
             Ok(v) => v.clone(),
             Err(_) => panic!("Slock could not read for clone!"),
         }
     }
+
+    /// Creates a clone of the lock and its data.
+    pub async fn clone_async(&self) -> Self {
+        return Slock::new(self.get_clone().await);
+    }
 }
 
 impl<T: Copy> Slock<T> {
+    /// If a lock's data implements copy, this will return an owned copy of it.
     pub async fn get(&self) -> T {
         match self.lock.read() {
             Ok(v) => *v,
@@ -148,13 +192,12 @@ impl<T: Copy> Slock<T> {
     }
 }
 
-impl<T> Slock<Vec<T>> {
-    pub async fn push(&self, value: T) {
-        self.set(|mut v| {
-            v.push(value);
-            v
-        })
-        .await;
+impl<T: Clone> Clone for Slock<T> {
+    /// Creates a clone of the lock and its data.
+    /// This operation is blocking.
+    /// Prefer `clone_async`
+    fn clone(&self) -> Self {
+        return Slock::new(block_on(self.get_clone()));
     }
 }
 
