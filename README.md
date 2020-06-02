@@ -1,4 +1,4 @@
-# smartlock-rs
+# Slock
 
 A mutex for Rust that never deadlocks.
 
