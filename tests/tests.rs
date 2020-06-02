@@ -1,5 +1,7 @@
 use futures::executor::block_on;
+use lazy_static::lazy_static;
 use slock::*;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[test]
 fn synchronous() {
@@ -9,6 +11,7 @@ fn synchronous() {
     assert_eq!(new_value, 6);
 }
 
+/// Many mutations should be able to happen at the same time without loss.
 #[test]
 fn asynchronous() {
     let lock = Slock::new(0i32);
@@ -25,6 +28,7 @@ fn asynchronous() {
     assert_eq!(block_on(lock.get_clone()), 5);
 }
 
+/// Should be able to create multiple references to the same lock.
 #[test]
 fn reference_counting() {
     let lock_1 = Slock::new(0);
@@ -32,12 +36,6 @@ fn reference_counting() {
     block_on(lock_1.set(|_| 1));
     assert_eq!(block_on(lock_1.get_clone()), 1);
     assert_eq!(block_on(lock_2.get_clone()), 1);
-}
-
-#[test]
-fn lock_function() {
-    let lock = lock(0);
-    assert_eq!(block_on(lock.get_clone()), 0);
 }
 
 #[test]
@@ -59,10 +57,55 @@ fn mapping() {
     assert_eq!(age, 32);
 }
 
+/// A slock containing a vector should be able to asynchronously push.
 #[test]
 fn vector() {
     let vec: Vec<i32> = Vec::new();
     let lock = Slock::new(vec);
     block_on(lock.push(1));
     assert_eq!(block_on(lock.map(|v| v[0])), 1);
+}
+
+/// Old value should Drop when a new value is created.
+#[test]
+fn destruction() {
+    lazy_static! {
+        static ref COUNT: AtomicU8 = AtomicU8::new(0);
+    }
+
+    struct Struct;
+
+    impl Drop for Struct {
+        fn drop(&mut self) {
+            COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let lock = Slock::new(Struct);
+    block_on(lock.set(|_| Struct));
+    block_on(lock.set(|_| Struct));
+    std::mem::drop(lock);
+    assert_eq!(COUNT.load(Ordering::SeqCst), 3);
+}
+
+/// Old value should not Drop when returned back to the lock.
+#[test]
+fn non_destruction() {
+    lazy_static! {
+        static ref COUNT: AtomicU8 = AtomicU8::new(0);
+    }
+
+    struct Struct;
+
+    impl Drop for Struct {
+        fn drop(&mut self) {
+            COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let lock = Slock::new(Struct);
+    block_on(lock.set(|v| v));
+    block_on(lock.set(|v| v));
+    std::mem::drop(lock);
+    assert_eq!(COUNT.load(Ordering::SeqCst), 1);
 }

@@ -6,6 +6,9 @@
 //! ```rust
 //! use slock::*;
 //!
+//! # async fn do_something_in_a_thread(_: Slock<i32>) {}
+//! # async fn do_something_else_in_a_thread(_: Slock<i32>) {}
+//! # async fn do_another_thing_in_a_thread(_: Slock<i32>) {}
 //! async {
 //!     // Create a new lock with an initial value
 //!     let lock = Slock::new(5i32);
@@ -18,11 +21,11 @@
 //!     println!("{}", value); // 6
 //!
 //!     // Use in multiple threads
-//!     //futures::join!(
-//!     //    do_something_in_a_thread(lock.clone()),
-//!     //    do_something_else_in_a_thread(lock.clone()),
-//!     //    do_another_thing_in_a_thread(lock.clone()),
-//!     //);
+//!     futures::join!(
+//!         do_something_in_a_thread(lock.split()),
+//!         do_something_else_in_a_thread(lock.split()),
+//!         do_another_thing_in_a_thread(lock.split()),
+//!     );
 //! };
 //! ```
 //!
@@ -32,42 +35,32 @@
 //!
 //! Bad:
 //! ```rust
-//! use slock::*;
-//! use futures::executor::block_on;
+//! # use slock::*;
+//! # use futures::executor::block_on;
+//! # async {
+//! let lock_1 = Slock::new(0i32);
+//! let lock_2 = Slock::new(1i32);
 //!
-//! async {
-//!     let lock_1 = Slock::new(0i32);
-//!     let lock_2 = Slock::new(1i32);
-//!
-//!     // Add the value of lock_2 to lock_2
-//!     lock_1.set(|v| {
-//!         v + block_on(lock_2.get())
-//!     });
-//! };
+//! // Add the value of lock_2 to lock_1
+//! lock_1.set(|v| v + block_on(lock_2.get())).await;
+//! # };
 //! ```
 //!
 //! Good:
 //! ```rust
-//! use slock::*;
+//! # use slock::*;
+//! # async {
+//! let lock_1 = Slock::new(0i32);
+//! let lock_2 = Slock::new(1i32);
 //!
-//! async {
-//!     let lock_1 = Slock::new(0i32);
-//!     let lock_2 = Slock::new(1i32);
-//!
-//!     // Add the value of lock_2 to lock_1
-//!     let v_2 = lock_2.get().await;
-//!     lock_1.set(|v| v + v_2);
-//! };
+//! // Add the value of lock_2 to lock_1
+//! let v_2 = lock_2.get().await;
+//! lock_1.set(|v| v + v_2).await;
+//! # };
 //! ```
 
 use futures::executor::block_on;
-pub use slock_derive::Slockable;
 use std::sync::{Arc, RwLock};
-
-mod slockable;
-pub use slockable::Slockable;
-
-pub mod vec;
 
 pub struct Slock<T> {
     lock: Arc<RwLock<T>>,
@@ -87,7 +80,7 @@ impl<T> Slock<T> {
     /// # let lock = Slock::new((0, 1, 2));
     /// # async {
     /// let name = lock.map(|v| v.1).await;
-    /// # }
+    /// # };
     /// ```
     pub async fn map<F, U>(&self, mapper: F) -> U
     where
@@ -106,7 +99,7 @@ impl<T> Slock<T> {
     /// # async {
     /// lock.set(|v| v + 1).await;
     /// lock.set(|_| 6).await;
-    /// # }
+    /// # };
     /// ```
     pub async fn set<F>(&self, setter: F)
     where
@@ -131,7 +124,7 @@ impl<T> Slock<T> {
     /// # async {
     /// lock.set_ref(|v| v + 1).await;
     /// lock.set(|_| 6).await;
-    /// # }
+    /// # };
     /// ```
     pub async fn set_ref<F>(&self, setter: F)
     where
@@ -182,6 +175,18 @@ impl<T: Clone> Slock<T> {
     }
 }
 
+impl<T> Slock<Vec<T>> {
+    /// Asyncronously push to a vec.
+    /// Note that due to the nature of async code, order cannot be guaranteed.
+    pub async fn push(&self, value: T) {
+        self.set(|mut v| {
+            v.push(value);
+            v
+        })
+        .await;
+    }
+}
+
 impl<T: Copy> Slock<T> {
     /// If a lock's data implements copy, this will return an owned copy of it.
     pub async fn get(&self) -> T {
@@ -199,8 +204,4 @@ impl<T: Clone> Clone for Slock<T> {
     fn clone(&self) -> Self {
         return Slock::new(block_on(self.get_clone()));
     }
-}
-
-pub fn lock<T>(value: T) -> Slock<T> {
-    Slock::new(value)
 }
