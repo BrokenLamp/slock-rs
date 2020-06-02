@@ -1,6 +1,6 @@
 [package]
 name = "slock"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Brandon Dyer <BrandonDyer64@gmail.com>"]
 edition = "2018"
 description = "An async mutex that never deadlocks."
