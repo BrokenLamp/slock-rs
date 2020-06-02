@@ -117,27 +117,6 @@ impl<T> Slock<T> {
         }
     }
 
-    /// A setter using a mutable reference
-    /// ```rust
-    /// # use slock::*;
-    /// # let lock = Slock::new(1i32);
-    /// # async {
-    /// lock.set_ref(|v| v + 1).await;
-    /// lock.set(|_| 6).await;
-    /// # };
-    /// ```
-    pub async fn set_ref<F>(&self, setter: F)
-    where
-        F: FnOnce(&T) -> T,
-    {
-        match self.lock.write() {
-            Ok(mut v) => {
-                setter(&mut v);
-            }
-            Err(_) => panic!("Slock could not write!"),
-        }
-    }
-
     /// Create's a new lock pointing to the same data.
     /// Modifying the data in the new lock will result in
     /// seeing the same change in the old lock.
@@ -155,7 +134,7 @@ impl<T> Slock<T> {
     /// Returns the lock's atomic reference counter.
     /// This is unsafe as using it can no longer guarantee
     /// deadlocks won't occur.
-    pub unsafe fn get_arc(&self) -> Arc<RwLock<T>> {
+    pub unsafe fn get_raw_arc(&self) -> Arc<RwLock<T>> {
         self.lock.clone()
     }
 }
