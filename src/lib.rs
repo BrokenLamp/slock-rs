@@ -1,7 +1,6 @@
-//! A Slock, or Smart Lock, is a smart wrapper around an atomically reference counted read/write lock.
+//! A [`Slock`](struct.Slock.html), or Smart Lock, is a smart wrapper around an atomically reference counted read/write lock.
 //!
-//! All accesses and modifications are done in a contained manner.
-//! This ensures that threads will never deadlock on a Slock operation.
+//! All accesses and modifications are contained, ensuring that threads will never deadlock on a Slock operation.
 //!
 //! ```rust
 //! use slock::*;
@@ -60,7 +59,12 @@
 //! ```
 
 use futures::executor::block_on;
-use std::sync::{Arc, RwLock};
+use std::{
+    cmp::Eq,
+    collections::HashMap,
+    hash::Hash,
+    sync::{Arc, RwLock},
+};
 
 pub struct Slock<T> {
     lock: Arc<RwLock<T>>,
@@ -77,9 +81,10 @@ impl<T> Slock<T> {
     /// Extract inner values from within a Slock
     /// ```rust
     /// # use slock::*;
-    /// # let lock = Slock::new((0, 1, 2));
+    /// # struct User { name: &'static str };
+    /// # let lock = Slock::new(User {name: "bobs"});
     /// # async {
-    /// let name = lock.map(|v| v.1).await;
+    /// let name = lock.map(|v| v.name).await;
     /// # };
     /// ```
     pub async fn map<F, U>(&self, mapper: F) -> U
@@ -165,6 +170,68 @@ impl<T> Slock<Vec<T>> {
         .await;
     }
 }
+
+impl<T> Slock<Slock<T>> {
+    /// Converts from `Slock<Slock<T>>` to `Slock<T>`
+    pub async fn flatten(&self) -> Slock<T> {
+        self.map(|inner| inner.split()).await
+    }
+}
+
+/// ## HashMaps
+///
+/// Slock has built-in convenience methods for working with `Slock<HashMap<Slock>>`s
+pub type SlockMap<K, V> = Slock<HashMap<K, Slock<V>>>;
+
+impl<K: Eq + Hash + Copy, V> SlockMap<K, V> {
+    pub fn new_map() -> Slock<HashMap<K, Slock<V>>> {
+        let map: HashMap<K, Slock<V>> = HashMap::new();
+        Slock::new(map)
+    }
+
+    pub async fn insert<F>(&self, key: K, setter: F)
+    where
+        F: FnOnce(Option<V>) -> V,
+    {
+        if let Some(data) = self.from_key(key).await {
+            data.set(|v| setter(Some(v))).await;
+        } else {
+            self.set(|mut hash_map| {
+                hash_map.insert(key, Slock::new(setter(None)));
+                hash_map
+            })
+            .await;
+        }
+    }
+
+    pub async fn from_key(&self, key: K) -> Option<Slock<V>> {
+        self.map(|hash_map| {
+            let key = key;
+            hash_map.get(&key).map(|inner| inner.split())
+        })
+        .await
+    }
+}
+
+macro_rules! impl_op {
+    ($name:ident, $name_assign:ident, $fun:ident, $op:tt) => {
+        impl<T> std::ops::$name_assign<T> for Slock<T>
+        where
+            T: Copy + std::ops::$name<T, Output = T>,
+            T: From<T>,
+        {
+            fn $fun(&mut self, other: T) {
+                block_on(self.set(|v| v $op other));
+            }
+        }
+    };
+}
+
+impl_op!(Add, AddAssign, add_assign, +);
+impl_op!(Sub, SubAssign, sub_assign, -);
+impl_op!(Mul, MulAssign, mul_assign, *);
+impl_op!(Div, DivAssign, div_assign, /);
+impl_op!(Rem, RemAssign, rem_assign, %);
 
 impl<T: Copy> Slock<T> {
     /// If a lock's data implements copy, this will return an owned copy of it.

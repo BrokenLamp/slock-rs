@@ -109,3 +109,19 @@ fn non_destruction() {
     std::mem::drop(lock);
     assert_eq!(COUNT.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn arrithmetic() {
+    let mut lock = Slock::new(0i32);
+    lock += 1;
+    assert_eq!(block_on(lock.get()), 1);
+    lock -= 1;
+    assert_eq!(block_on(lock.get()), 0);
+    lock += 1;
+    lock *= 2;
+    assert_eq!(block_on(lock.get()), 2);
+    lock /= 2;
+    assert_eq!(block_on(lock.get()), 1);
+    lock %= 1;
+    assert_eq!(block_on(lock.get()), 0);
+}
