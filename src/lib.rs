@@ -58,7 +58,7 @@
 //! # };
 //! ```
 
-use futures::executor::block_on;
+pub use async_std::future::{timeout, TimeoutError};
 use std::{
     cmp::Eq,
     collections::HashMap,
@@ -66,15 +66,26 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+pub struct SlockData<T> {
+    pub version: u32,
+    pub value: T,
+    pub hook: Option<Box<dyn FnMut(&T)>>,
+}
+
 pub struct Slock<T> {
-    lock: Arc<RwLock<T>>,
+    lock: Arc<RwLock<SlockData<T>>>,
 }
 
 impl<T> Slock<T> {
     /// Create a new Slock with a given initial value.
     pub fn new(value: T) -> Self {
+        let data = SlockData {
+            version: 0,
+            value,
+            hook: None,
+        };
         Self {
-            lock: Arc::new(RwLock::new(value)),
+            lock: Arc::new(RwLock::new(data)),
         }
     }
 
@@ -87,12 +98,17 @@ impl<T> Slock<T> {
     /// let name = lock.map(|v| v.name).await;
     /// # };
     /// ```
-    pub async fn map<F, U>(&self, mapper: F) -> U
+    pub async fn map<F, U>(&self, mapper: F) -> Result<U, TimeoutError>
     where
         F: FnOnce(&T) -> U,
     {
         match self.lock.read() {
-            Ok(v) => mapper(&*v),
+            Ok(v) => {
+                timeout(std::time::Duration::from_secs(1), async {
+                    mapper(&v.value)
+                })
+                .await
+            }
             Err(_) => panic!("Slock could not read for map!"),
         }
     }
@@ -111,12 +127,23 @@ impl<T> Slock<T> {
         F: FnOnce(T) -> T,
     {
         match self.lock.write() {
-            Ok(mut v) => {
-                let ptr = &mut *v as *mut T;
+            Ok(mut data) => {
+                let ptr = &mut data.value as *mut T;
                 unsafe {
-                    let new = setter(ptr.read());
-                    ptr.write(new);
+                    let new = timeout(std::time::Duration::from_secs(1), async {
+                        setter(ptr.read())
+                    })
+                    .await;
+                    if let Ok(new) = new {
+                        timeout(std::time::Duration::from_secs(1), async {
+                            data.hook.as_mut().map(|hook| hook(&new));
+                        })
+                        .await
+                        .ok();
+                        ptr.write(new);
+                    }
                 }
+                data.version += 1;
             }
             Err(_) => panic!("Slock could not write!"),
         }
@@ -139,8 +166,20 @@ impl<T> Slock<T> {
     /// Returns the lock's atomic reference counter.
     /// This is unsafe as using it can no longer guarantee
     /// deadlocks won't occur.
-    pub unsafe fn get_raw_arc(&self) -> Arc<RwLock<T>> {
+    pub unsafe fn get_raw_arc(&self) -> Arc<RwLock<SlockData<T>>> {
         self.lock.clone()
+    }
+
+    pub fn hook<F: 'static>(&self, hook: F)
+    where
+        F: FnMut(&T),
+    {
+        match self.lock.write() {
+            Ok(mut data) => {
+                data.hook = Some(Box::new(hook));
+            }
+            Err(_) => panic!("Slock could not write!"),
+        }
     }
 }
 
@@ -148,7 +187,7 @@ impl<T: Clone> Slock<T> {
     /// Returns a clone of the lock's data.
     pub async fn get_clone(&self) -> T {
         match self.lock.read() {
-            Ok(v) => v.clone(),
+            Ok(v) => v.value.clone(),
             Err(_) => panic!("Slock could not read for clone!"),
         }
     }
@@ -174,7 +213,7 @@ impl<T> Slock<Vec<T>> {
 impl<T> Slock<Slock<T>> {
     /// Converts from `Slock<Slock<T>>` to `Slock<T>`
     pub async fn flatten(&self) -> Slock<T> {
-        self.map(|inner| inner.split()).await
+        self.map(|inner| inner.split()).await.unwrap()
     }
 }
 
@@ -210,44 +249,21 @@ impl<K: Eq + Hash + Copy, V> SlockMap<K, V> {
             hash_map.get(&key).map(|inner| inner.split())
         })
         .await
+        .unwrap()
     }
 }
-
-macro_rules! impl_op {
-    ($name:ident, $name_assign:ident, $fun:ident, $op:tt) => {
-        impl<T> std::ops::$name_assign<T> for Slock<T>
-        where
-            T: Copy + std::ops::$name<T, Output = T>,
-            T: From<T>,
-        {
-            fn $fun(&mut self, other: T) {
-                block_on(self.set(|v| v $op other));
-            }
-        }
-    };
-}
-
-impl_op!(Add, AddAssign, add_assign, +);
-impl_op!(Sub, SubAssign, sub_assign, -);
-impl_op!(Mul, MulAssign, mul_assign, *);
-impl_op!(Div, DivAssign, div_assign, /);
-impl_op!(Rem, RemAssign, rem_assign, %);
 
 impl<T: Copy> Slock<T> {
     /// If a lock's data implements copy, this will return an owned copy of it.
     pub async fn get(&self) -> T {
         match self.lock.read() {
-            Ok(v) => *v,
+            Ok(v) => v.value,
             Err(_) => panic!("Slock could not read for clone!"),
         }
     }
 }
 
-impl<T: Clone> Clone for Slock<T> {
-    /// Creates a clone of the lock and its data.
-    /// This operation is blocking.
-    /// Prefer `clone_async`
-    fn clone(&self) -> Self {
-        return Slock::new(block_on(self.get_clone()));
-    }
-}
+pub mod blocking;
+
+unsafe impl<T> Send for Slock<T> {}
+unsafe impl<T> Sync for Slock<T> {}

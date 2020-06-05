@@ -1,6 +1,6 @@
 [package]
 name = "slock"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Brandon Dyer <BrandonDyer64@gmail.com>"]
 edition = "2018"
 description = "An async mutex that never deadlocks."
@@ -12,8 +12,17 @@ categories = ["asynchronous", "concurrency", "memory-management", "rust-patterns
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-futures = "0.3"
+[features]
+default = ["futures", "blocking"]
+blocking = ["futures"]
+
+[dependencies.futures]
+version = "0.3"
+optional = true
+
+[dependencies.async-std]
+version = "1.6"
 
 [dev-dependencies]
 lazy_static = "1.4"
+futures = "0.3"

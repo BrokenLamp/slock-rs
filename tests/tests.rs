@@ -50,8 +50,8 @@ fn mapping() {
         age: 32,
     });
 
-    let name = block_on(lock.map(|v| v.name));
-    let age = block_on(lock.map(|v| v.age));
+    let name = block_on(lock.map(|v| v.name)).unwrap();
+    let age = block_on(lock.map(|v| v.age)).unwrap();
 
     assert_eq!(name, "Bob");
     assert_eq!(age, 32);
@@ -63,7 +63,7 @@ fn vector() {
     let vec: Vec<i32> = Vec::new();
     let lock = Slock::new(vec);
     block_on(lock.push(1));
-    assert_eq!(block_on(lock.map(|v| v[0])), 1);
+    assert_eq!(block_on(lock.map(|v| v[0])).unwrap(), 1);
 }
 
 /// Old value should Drop when a new value is created.
@@ -108,20 +108,4 @@ fn non_destruction() {
     block_on(lock.set(|v| v));
     std::mem::drop(lock);
     assert_eq!(COUNT.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn arrithmetic() {
-    let mut lock = Slock::new(0i32);
-    lock += 1;
-    assert_eq!(block_on(lock.get()), 1);
-    lock -= 1;
-    assert_eq!(block_on(lock.get()), 0);
-    lock += 1;
-    lock *= 2;
-    assert_eq!(block_on(lock.get()), 2);
-    lock /= 2;
-    assert_eq!(block_on(lock.get()), 1);
-    lock %= 1;
-    assert_eq!(block_on(lock.get()), 0);
 }
