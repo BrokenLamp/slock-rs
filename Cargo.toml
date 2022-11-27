@@ -8,7 +8,7 @@ license = "MIT"
 name = "slock"
 readme = "README.md"
 repository = "https://github.com/BrokenLamp/slock-rs"
-version = "0.2.0"
+version = "0.2.1"
 
 [dependencies]
 tokio = {version = "1.22", features = ["sync", "time", "rt", "macros"]}

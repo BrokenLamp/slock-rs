@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! A [`Slock`](struct.Slock.html), or Smart Lock, is a smart wrapper around an atomically reference counted read/write lock.
 //!
 //! All accesses and modifications are contained, ensuring that threads will never deadlock on a Slock operation.
@@ -65,12 +67,17 @@ use tokio::{
     time::{error::Elapsed, timeout},
 };
 
-pub struct SlockData<T> {
-    pub version: u32,
+struct SlockData<T> {
+    pub version: u64,
     pub value: T,
     pub hook: Option<Box<dyn FnMut(&T)>>,
 }
 
+/// The [`Slock`] object.
+///
+/// An atomically reference counted read/write lock with special safety features to avoid deadlocks.
+///
+/// When used correctly (no nesting lock access functions), deadlocks should be impossible.
 pub struct Slock<T> {
     lock: Arc<RwLock<SlockData<T>>>,
 }
@@ -155,13 +162,9 @@ impl<T> Slock<T> {
         }
     }
 
-    /// Returns the lock's atomic reference counter.
-    /// This is unsafe as using it can no longer guarantee
-    /// deadlocks won't occur.
-    pub unsafe fn get_raw_arc(&self) -> Arc<RwLock<SlockData<T>>> {
-        self.lock.clone()
-    }
-
+    /// Subscribe to changes in the lock.
+    ///
+    /// `hook` will be called any time `Slock::set` is called.
     pub async fn hook<F: 'static>(&self, hook: F)
     where
         F: FnMut(&T),
@@ -217,11 +220,13 @@ impl<T> Slock<Slock<T>> {
 pub type SlockMap<K, V> = Slock<HashMap<K, Slock<V>>>;
 
 impl<K: Eq + Hash + Copy, V> SlockMap<K, V> {
+    /// Create a new `Slock` powered `HashMap`
     pub fn new_map() -> Slock<HashMap<K, Slock<V>>> {
         let map: HashMap<K, Slock<V>> = HashMap::new();
         Slock::new(map)
     }
 
+    /// Insert / modify a value in the map at a given key.
     pub async fn insert<F>(&self, key: K, setter: F)
     where
         F: FnOnce(Option<V>) -> V,
@@ -237,6 +242,7 @@ impl<K: Eq + Hash + Copy, V> SlockMap<K, V> {
         }
     }
 
+    /// Get a value from the map at a given key.
     pub async fn from_key(&self, key: K) -> Option<Slock<V>> {
         self.map(|hash_map| {
             let key = key;
@@ -255,7 +261,7 @@ impl<T: Copy> Slock<T> {
     }
 }
 
-pub mod blocking;
-
+// Implement `Send` and `Sync` for `Slock`
+// Note that `Slock` is still usable without these traits, they just can't be used between threads.
 unsafe impl<T: Send> Send for Slock<T> {}
 unsafe impl<T: Send> Sync for Slock<T> {}
