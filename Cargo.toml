@@ -1,28 +1,17 @@
 [package]
-name = "slock"
-version = "0.1.2"
 authors = ["Brandon Dyer <BrandonDyer64@gmail.com>"]
-edition = "2018"
+categories = ["asynchronous", "concurrency", "memory-management", "rust-patterns"]
 description = "An async mutex that never deadlocks."
+edition = "2021"
+keywords = ["mutex", "smart", "lock", "async"]
+license = "MIT"
+name = "slock"
 readme = "README.md"
 repository = "https://github.com/BrokenLamp/slock-rs"
-license = "MIT"
-keywords = ["mutex", "smart", "lock", "async"]
-categories = ["asynchronous", "concurrency", "memory-management", "rust-patterns"]
+version = "0.2.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[features]
-default = ["futures", "blocking"]
-blocking = ["futures"]
-
-[dependencies.futures]
-version = "0.3"
-optional = true
-
-[dependencies.async-std]
-version = "1.6"
+[dependencies]
+tokio = {version = "1.22", features = ["sync", "time", "rt", "macros"]}
 
 [dev-dependencies]
 lazy_static = "1.4"
-futures = "0.3"

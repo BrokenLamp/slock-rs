@@ -1,15 +1,15 @@
-use futures::executor::block_on;
 use slock::*;
 
-#[test]
-fn basic_hooks() {
+#[tokio::test]
+async fn basic_hooks() {
+    // SAFETY: Required to increment the static counter
     unsafe {
         let lock = Slock::new(());
         static mut COUNT: i32 = 0;
-        lock.hook(|_| COUNT += 1);
-        block_on(lock.set(|_| ()));
-        block_on(lock.set(|_| ()));
-        block_on(lock.set(|_| ()));
+        lock.hook(|_| COUNT += 1).await;
+        lock.set(|_| ()).await;
+        lock.set(|_| ()).await;
+        lock.set(|_| ()).await;
         assert_eq!(COUNT, 3);
     }
 }
